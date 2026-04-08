@@ -1,0 +1,11 @@
+node_modules
+npm-debug.log
+uploads/*
+!uploads/.gitkeep
+*.xlsx
+*.xls
+*.docx
+.git
+.gitignore
+.vscode
+*.md

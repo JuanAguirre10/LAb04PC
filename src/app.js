@@ -9,16 +9,14 @@ let resultadosCache = [];
 
 async function consultarONPE(dni) {
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: "new",
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process'
+      '--no-first-run'
     ]
   });
   const page = await browser.newPage();
@@ -35,7 +33,7 @@ async function consultarONPE(dni) {
     const btn = await page.$('button[type="submit"], button.btn, button');
     if (btn) await btn.click();
     else await page.keyboard.press('Enter');
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise(r => setTimeout(r, 7000));
 
     const datos = await page.evaluate(() => {
       const body = document.body.innerText.toUpperCase();
@@ -45,9 +43,8 @@ async function consultarONPE(dni) {
       else if (body.includes('PRESIDENTE DE MESA')) esMiembro = 'PRESIDENTE DE MESA';
       else if (body.includes('ES MIEMBRO DE MESA') && !body.includes('NO ERES MIEMBRO')) esMiembro = 'MIEMBRO DE MESA';
 
-      const allText = document.body.innerText;
-      const ubicMatch = allText.match(/[A-ZÁÉÍÓÚ]+\s*\/\s*[A-ZÁÉÍÓÚ]+\s*\/\s*[A-ZÁÉÍÓÚ ]+/i);
-      const ubicacion = ubicMatch ? ubicMatch[0].trim() : '';
+      const localEl = document.querySelector('.local');
+      const ubicacion = localEl ? localEl.innerText.replace(/\n/g, ' ').trim() : '';
 
       const dirEl = document.querySelector('.direccion_local');
       const direccion = dirEl ? dirEl.innerText.replace(/\n/g, ' ').trim() : '';
@@ -76,6 +73,7 @@ app.get('/', (req, res) => {
     header { background: #028090; color: white; padding: 20px 40px; }
     header h1 { font-size: 24px; }
     header p { font-size: 13px; opacity: 0.85; margin-top: 5px; }
+    .version-badge { display: inline-block; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); padding: 2px 10px; border-radius: 12px; font-size: 12px; margin-top: 8px; }
     .container { padding: 30px 40px; }
     .upload-box { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 30px; }
     .upload-box h2 { color: #028090; margin-bottom: 15px; }
@@ -99,6 +97,7 @@ app.get('/', (req, res) => {
   <header>
     <h1>🗳️ Consulta Electoral ONPE 2026</h1>
     <p>Sube un Excel con DNIs para verificar si son miembros de mesa</p>
+    <span class="version-badge">${process.env.APP_VERSION || 'dev'}</span>
   </header>
   <div class="container">
     <div class="upload-box">
@@ -112,6 +111,7 @@ app.get('/', (req, res) => {
   </div>
   <script>
     let filas = [];
+    let currentAbort = null;
 
     function renderTabla() {
       let html = '<table><thead><tr><th>DNI</th><th>Ubicación (Región/Provincia/Distrito)</th><th>Dirección del Local de Votación</th><th>¿Es Miembro de Mesa?</th></tr></thead><tbody>';
@@ -127,32 +127,41 @@ app.get('/', (req, res) => {
     async function consultar() {
       const archivo = document.getElementById('archivo').files[0];
       if (!archivo) { alert('Selecciona un archivo Excel'); return; }
+
+      if (currentAbort) currentAbort.abort();
+      currentAbort = new AbortController();
+      const signal = currentAbort.signal;
+
       const formData = new FormData();
       formData.append('excel', archivo);
       document.getElementById('loading').style.display = 'block';
       document.getElementById('tabla-wrap').innerHTML = '';
       filas = [];
 
-      const res = await fetch('/consultar-stream', { method: 'POST', body: formData });
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+      try {
+        const res = await fetch('/consultar-stream', { method: 'POST', body: formData, signal });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\\n');
-        buffer = lines.pop();
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              filas.push(data);
-              renderTabla();
-            } catch(e) {}
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                filas.push(data);
+                renderTabla();
+              } catch(e) {}
+            }
           }
         }
+      } catch(e) {
+        if (e.name !== 'AbortError') console.error(e);
       }
       document.getElementById('loading').style.display = 'none';
     }
@@ -177,6 +186,7 @@ app.post('/consultar-stream', upload.single('excel'), async (req, res) => {
     const resultado = { dni, ...datos };
     resultadosCache.push(resultado);
     res.write('data: ' + JSON.stringify(resultado) + '\n\n');
+    await new Promise(r => setTimeout(r, 2000));
   }
   res.end();
 });

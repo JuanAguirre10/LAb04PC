@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "Bash(docker --version)",
-      "Bash(python3 -c ':*)"
+      "Bash(python3 -c ':*)",
+      "Bash(docker stop:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker run:*)",
+      "Bash(docker build:*)",
+      "Bash(docker tag:*)",
+      "Bash(docker push:*)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :3000)"
     ]
   }
 }
